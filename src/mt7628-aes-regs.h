@@ -1,20 +1,13 @@
-/*
- * Driver for Mediatek MT76x8 AES cryptographic accelerator.
- *
- * Copyright (c) 2018 Richard van Schagen <vschagen@cs.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- */
-
 #ifndef __MTK_AES_ENGINE__
 #define __MTK_AES_ENGINE__
 
+#include <crypto/aes.h>
+#include <crypto/scatterwalk.h>
+#include <crypto/internal/skcipher.h>
+
 #define NUM_AES_RX_DESC		128
 #define NUM_AES_TX_DESC		128
-#define NUM_AES_BYPASS		0
+#define NUM_AES_BYPASS		1
 
 #define RALINK_SYSCTL_BASE	0xB0000000
 #define REG_CLKCTRL		((void *)RALINK_SYSCTL_BASE + 0x30)
@@ -73,9 +66,9 @@
 #define AES_RX_DONE_INT0	(1u<<16)
 #define AES_TX_DONE_INT0	(1u<<0)
 
-#define AES_MASK_INT_ALL	(AES_RX_DONE_INT0)
+#define AES_MASK_INT_ALL	(AES_RX_DLY_INT | AES_RX_DONE_INT0)
 
-#define AES_DLY_INIT_VALUE	0x00000000
+#define AES_DLY_INIT_VALUE	0x00008101  //8101
 
 /*
  * AES AES_RX Descriptor Format define
@@ -133,6 +126,82 @@ struct mtk_aes_dma {
 	struct scatterlist	*sg;
 	int			nents;
 	size_t			len;
+};
+
+/**
+ * struct mtk_cryp - Cryptographic device
+ * @base:	pointer to mapped register I/O base
+ * @dev:	pointer to device
+ * @clk_cryp:	pointer to crypto clock
+ * @irq:	global system and rings IRQ
+ * @tx:		pointer to descriptor input-ring
+ * @rx:		pointer to descriptor output-ring
+ * @src:	Source Scatterlist to be encrypted/decrypted
+ * @dst:	Destination Scatterlist for the result of the operation
+ *
+ * @aes_list:	device list of AES
+ *
+ * Structure storing cryptographic device information.
+ */
+struct mtk_cryp {
+	void __iomem			*base;
+	struct device			*dev;
+	struct clk			*clk;
+	int				irq;
+
+	struct aes_txdesc		*tx;
+	struct aes_rxdesc		*rx;
+
+	unsigned int			aes_tx_front_idx;
+	unsigned int			aes_rx_front_idx;
+	unsigned int			aes_tx_rear_idx;
+	unsigned int			aes_rx_rear_idx;
+	dma_addr_t			phy_tx;
+	dma_addr_t			phy_rx;
+
+	struct mtk_aes_dma		src;
+	struct mtk_aes_dma		dst;
+	struct mtk_aes_dma		orig_out;
+	struct list_head		aes_list;
+
+	struct crypto_engine		*engine;
+	spinlock_t			lock;
+	struct ablkcipher_request	*req;
+	struct mtk_aes_ctx		*ctx;
+
+	/* Buffers for copying for unaligned cases */
+	struct scatterlist		in_sgl;
+	struct scatterlist		out_sgl;
+	void				*buf_in;
+	void				*buf_out;
+	bool                    	sgs_copied;
+	struct scatter_walk		in_walk;
+	struct scatter_walk		out_walk;
+};
+
+struct mtk_aes_ctx {
+	struct mtk_cryp *cryp;
+	u8			key[AES_MAX_KEY_SIZE];
+	u32			keylen;
+	dma_addr_t		phy_key;
+	struct crypto_skcipher	*fallback;
+};
+
+struct mtk_aes_reqctx {
+	unsigned long		mode;
+	u8			*iv;
+	unsigned int		count;
+
+};
+
+struct mtk_aes_drv {
+	struct list_head	dev_list;
+	spinlock_t		lock;
+};
+
+static struct mtk_aes_drv mtk_aes = {
+	.dev_list = LIST_HEAD_INIT(mtk_aes.dev_list),
+	.lock = __SPIN_LOCK_UNLOCKED(mtk_aes.lock),
 };
 
 #endif
