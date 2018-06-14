@@ -1,86 +1,35 @@
-/*
- * Driver for Mediatek MT76x8 AES cryptographic accelerator.
- *
- * Copyright (c) 2018 Richard van Schagen <vschagen@cs.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- */
-
-#ifndef __MTK_PLATFORM_H_
-#define __MTK_PLATFORM_H_
-
+/* MT7628 AES Platform Header */
 #include <crypto/aes.h>
-#include <crypto/algapi.h>
-#include <crypto/internal/skcipher.h>
 #include <crypto/scatterwalk.h>
-#include <crypto/skcipher.h>
-#include <linux/crypto.h>
-#include <linux/dma-mapping.h>
-#include <linux/interrupt.h>
-#include <linux/scatterlist.h>
-#include <linux/types.h>
+#include <crypto/internal/skcipher.h>
 
-#include "mt7628-aes-regs.h"
+struct aes_rxdesc {
+	unsigned int SDP0;
+	volatile unsigned int rxd_info2;
+	unsigned int user_data;
+	unsigned int rxd_info4;
+	unsigned int IV[4];
+} __attribute__((aligned(32)));
+
+struct aes_txdesc {
+	unsigned int SDP0;
+	volatile unsigned int txd_info2;
+	unsigned int SDP1;
+	unsigned int txd_info4;
+	unsigned int IV[4];
+} __attribute__((aligned(32)));
 
 
-#define MTK_REC_NUM		16
-#define AES_QUEUE_SIZE		10
-#define AES_BUF_ORDER		2
+struct mtk_aes_dma {
+	struct scatterlist	*sg;
+	int			nents;
+	size_t			len;
+};
 
-struct mtk_aes_base_ctx;
+struct mtk_crypt;
 struct mtk_aes_rec;
-struct mtk_cryp;
 
 typedef int (*mtk_aes_fn)(struct mtk_cryp *cryp, struct mtk_aes_rec *aes);
-
-/**
- * struct mtk_aes_rec - AES operation record
- * @cryp:	pointer to Cryptographic device
- * @queue:	crypto request queue
- * @areq:	pointer to async request
- * @done_task:	the tasklet is use in AES interrupt
- * @queue_task:	the tasklet is used to dequeue request
- * @ctx:	pointer to current context
- * @src:	the structure that holds source sg list info
- * @dst:	the structure that holds destination sg list info
- * @aligned_sg:	the scatter list is use to alignment
- * @real_dst:	pointer to the destination sg list
- * @resume:	pointer to resume function
- * @total:	request buffer length
- * @buf:	pointer to page buffer
- * @id:		the current use of ring
- * @flags:	it's describing AES operation state
- * @lock:	the async queue lock
- *
- * Structure used to record AES execution state.
- */
-struct mtk_aes_rec {
-	struct mtk_cryp *cryp;
-	struct crypto_queue queue;
-	struct crypto_async_request *areq;
-	struct tasklet_struct done_task;
-	struct tasklet_struct queue_task;
-	struct mtk_aes_base_ctx *ctx;
-	struct mtk_aes_dma src;
-	struct mtk_aes_dma dst;
-
-	struct scatterlist aligned_sg;
-	struct scatterlist *real_dst;
-
-	mtk_aes_fn resume;
-
-	size_t total;
-	void *buf;
-	dma_addr_t		phy_key;
-
-	u8 id;
-	unsigned long flags;
-	/* queue lock */
-	spinlock_t lock;
-};
 
 /**
  * struct mtk_cryp - Cryptographic device
@@ -105,6 +54,7 @@ struct mtk_cryp {
 
 	struct aes_txdesc		*tx;
 	struct aes_rxdesc		*rx;
+	struct mtk_aes_rec		*rec;
 
 	unsigned int			aes_tx_front_idx;
 	unsigned int			aes_rx_front_idx;
@@ -112,18 +62,90 @@ struct mtk_cryp {
 	unsigned int			aes_rx_rear_idx;
 	dma_addr_t			phy_tx;
 	dma_addr_t			phy_rx;
+	dma_addr_t			phy_rec;
 
-	struct mtk_aes_rec 		*aes[MTK_REC_NUM];
 	struct list_head		aes_list;
 
-	struct crypto_skcipher	*fallback;
+	spinlock_t			lock;
 };
 
-int mtk_cipher_alg_register(struct mtk_cryp *cryp);
-void mtk_cipher_alg_release(struct mtk_cryp *cryp);
-static irqreturn_t mtk_aes_irq(int irq, void *dev_id);
-static void mtk_aes_done_task(unsigned long data);
-static void mtk_aes_queue_task(unsigned long data);
 
-#endif
+/**
+ * struct mtk_aes_rec - AES operation record
+ * @cryp:	pointer to Cryptographic device
+ * @queue:	crypto request queue
+ * @areq:	pointer to async request
+ * @done_task:	the tasklet is use in AES interrupt
+ * @queue_task:	the tasklet is used to dequeue request
+ * @ctx:	pointer to current context
+ * @src:	the structure that holds source sg list info
+ * @dst:	the structure that holds destination sg list info
+ * @aligned_sg:	the scatter list is use to alignment
+ * @real_dst:	pointer to the destination sg list
+ * @resume:	pointer to resume function
+ * @total:	request buffer length
+ * @buf:	pointer to page buffer
+ * @id:		the current use of ring
+ * @flags:	it's describing AES operation state
+ * @lock:	the async queue lock
+ *
+ * Structure used to record AES execution state.
+ */
+struct mtk_aes_rec {
+	struct mtk_cryp			*cryp;
+	struct crypto_queue		queue;
+	struct crypto_async_request	*areq;
+	struct tasklet_struct		done_task;
+	struct tasklet_struct		queue_task;
+	struct mtk_aes_base_ctx		*ctx;
+	struct mtk_aes_dma		src;
+	struct mtk_aes_dma		dst;
+	struct mtk_aes_dma		orig_out;
+	/* Buffers for copying for unaligned cases */
+	struct scatterlist		in_sgl;
+	struct scatterlist		out_sgl;
+	void				*buf_in;
+	void				*buf_out;
+	bool                    	sgs_copied;
+
+	mtk_aes_fn 			resume;
+
+	u8 				id;
+	unsigned long 			flags;
+	/* queue lock */
+	spinlock_t 			lock;
+};
+
+struct mtk_aes_base_ctx {
+	struct mtk_cryp 	*cryp;
+	u8			key[AES_MAX_KEY_SIZE];
+	u32			keylen;
+	dma_addr_t		phy_key;
+	struct crypto_skcipher	*fallback;
+	mtk_aes_fn 		start;
+};
+
+struct mtk_aes_ctx {
+	struct mtk_aes_base_ctx	base;
+
+};
+
+
+struct mtk_aes_reqctx {
+	unsigned long		mode;
+	u8			*iv;
+	unsigned int		count;
+
+};
+
+struct mtk_aes_drv {
+	struct list_head	dev_list;
+	spinlock_t		lock;
+};
+
+static struct mtk_aes_drv mtk_aes = {
+	.dev_list = LIST_HEAD_INIT(mtk_aes.dev_list),
+	.lock = __SPIN_LOCK_UNLOCKED(mtk_aes.lock),
+};
+
 

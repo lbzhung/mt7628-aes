@@ -1,10 +1,8 @@
 # Mediatek AES Crypto Engine
 
-New and improved AES Crypto Engine. Written from scratch to enable full features and performance
-on Linux Kernel v4.6+. It features full asynchronous support with crypto-engine queue handling.
+New and improved AES Crypto Engine. Written from scratch to enable full features and performance.
 
-Added alignment checks and buffer copy in order to work with OpenVPN. This comes with 
-performance penalties. 
+Attemping to queue request directly into the hardware engine ring descriptors to maximize performance. Work in Progress at the moment.
 
 This AES Engine is available in the Mediatek MT7628 and MT7688 SoC
 
