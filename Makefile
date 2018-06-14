@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mt7628_aes
-PKG_RELEASE:=1.1
+PKG_RELEASE:=1.2
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -27,7 +27,7 @@ define KernelPackage/crypto-hw-mt7628-aes
   DEPENDS:=+kmod-crypto-cbc +kmod-crypto-ecb +@CONFIG_CRYPTO_ENGINE
   TITLE:=Kernel driver for HW AES ENGINE MT7628
   FILES:=$(PKG_BUILD_DIR)/crypto-hw-mt7628-aes.ko
-  AUTOLOAD:=$(call AutoProbe,crypto-hw-mt7628-aes)
+  AUTOLOAD:=$(call AutoProbe, crypto-hw-mt7628-aes)
   $(call AddDepends/crypto)
 
 endef
